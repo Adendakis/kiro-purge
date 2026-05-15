@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kiro-cleaner"
+version = "0.1.0"
+description = "A cross-platform CLI tool to clean up Kiro IDE artefacts safely."
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1.0",
+]
+
+[project.scripts]
+kiro-cleaner = "kiro_cleaner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "property: property-based tests using Hypothesis",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "hypothesis>=6.82.0",
+]
