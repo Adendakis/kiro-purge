@@ -1,4 +1,4 @@
-# Kiro Cleaner
+# Kiro Purge
 
 A cross-platform Python CLI tool that safely cleans up artefacts accumulated by [Kiro IDE](https://kiro.dev) over time. Reclaim disk space by removing cache files, old logs, crash reports, and more — without risking your project context or chat history.
 
