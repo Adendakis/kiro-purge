@@ -11,6 +11,7 @@ DEFAULT_RETENTION: dict[str, int] = {
     "crash_reports": 30,
     "history": 30,
     "chats": 30,
+    "sessions": 90,
     "cache": 0,
     "temp": 0,
     "index": 0,

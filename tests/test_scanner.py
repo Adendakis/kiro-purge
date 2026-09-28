@@ -81,6 +81,55 @@ class TestClassifyFile:
         """A non-.chat file in kiro.kiroagent/ should be uncategorized."""
         assert _classify_file(Path("User/globalStorage/kiro.kiroagent/other.json")) == "uncategorized"
 
+    def test_sessions_extensionless_under_hash(self):
+        """An extension-less file under a workspace-hash dir is a session log."""
+        assert (
+            _classify_file(Path("User/globalStorage/kiro.kiroagent/abc123/6f65f441d88ae5"))
+            == "sessions"
+        )
+
+    def test_sessions_nested_under_hash(self):
+        """An extension-less file nested deeper under a hash dir is a session log."""
+        assert (
+            _classify_file(Path("User/globalStorage/kiro.kiroagent/abc123/sub/e33c97a7"))
+            == "sessions"
+        )
+
+    def test_session_with_extension_is_not_session(self):
+        """A file with an extension under a hash dir is NOT a session (uncategorized)."""
+        assert (
+            _classify_file(Path("User/globalStorage/kiro.kiroagent/abc123/snapshot.py"))
+            == "uncategorized"
+        )
+
+    def test_extensionless_directly_in_kiroagent_not_session(self):
+        """An extension-less file directly in kiroagent/ (no hash dir) is uncategorized."""
+        assert (
+            _classify_file(Path("User/globalStorage/kiro.kiroagent/topfile"))
+            == "uncategorized"
+        )
+
+    def test_per_workspace_index_classified_as_index(self):
+        """A per-workspace index/ subtree is classified as index, not sessions."""
+        assert (
+            _classify_file(Path("User/globalStorage/kiro.kiroagent/abc123/index/data.bin"))
+            == "index"
+        )
+
+    def test_per_workspace_nested_index(self):
+        """A deeply nested per-workspace index/ subtree is classified as index."""
+        assert (
+            _classify_file(Path("User/globalStorage/kiro.kiroagent/abc123/x/index/y/v.bin"))
+            == "index"
+        )
+
+    def test_index_precedence_over_session(self):
+        """An extension-less file inside a per-workspace index/ is index, not sessions."""
+        assert (
+            _classify_file(Path("User/globalStorage/kiro.kiroagent/abc123/index/segment0"))
+            == "index"
+        )
+
 
 class TestFormatSize:
     """Tests for the format_size function."""
@@ -146,8 +195,11 @@ class TestScanStorage:
         # 2 .chat files
         assert result.categories["chats"].file_count == 2
 
-        # index/ has 2 files
-        assert result.categories["index"].file_count == 2
+        # 2 extension-less session logs under the workspace-hash dir
+        assert result.categories["sessions"].file_count == 2
+
+        # index: 2 top-level index/ files + 1 per-workspace index/ file
+        assert result.categories["index"].file_count == 3
 
         # 1 .tmp file at root level (not under a categorized dir)
         assert result.categories["temp"].file_count == 1
@@ -160,8 +212,9 @@ class TestScanStorage:
 
     def test_scan_uncategorized(self, mock_kiro_storage):
         result = scan_storage(mock_kiro_storage)
-        # config.json and settings.json at root are uncategorized
-        assert result.uncategorized.file_count == 2
+        # config.json + settings.json at root, the snapshot.py source file, plus
+        # the workspaceStorage workspace.json and state.vscdb entries.
+        assert result.uncategorized.file_count == 5
 
     def test_scan_total_invariant(self, mock_kiro_storage):
         """Total files should equal sum of all category counts + uncategorized."""
@@ -195,7 +248,7 @@ class TestScanStorage:
 
     def test_scan_result_has_all_categories(self, empty_kiro_storage):
         result = scan_storage(empty_kiro_storage)
-        expected_categories = {"logs", "cache", "chats", "index", "temp", "history", "crash_reports"}
+        expected_categories = {"logs", "cache", "chats", "sessions", "index", "temp", "history", "crash_reports"}
         assert set(result.categories.keys()) == expected_categories
 
     def test_each_file_in_exactly_one_category(self, mock_kiro_storage):
@@ -496,6 +549,51 @@ def uncategorized_path_strategy(draw):
     return "/".join(parts)
 
 
+def _hash_segment():
+    """Generate a hex workspace-hash-like directory segment."""
+    return st.text(alphabet="0123456789abcdef", min_size=8, max_size=32)
+
+
+def _extensionless_name():
+    """Generate a filename with no extension (hex hash style)."""
+    return st.text(alphabet="0123456789abcdef", min_size=8, max_size=32)
+
+
+@st.composite
+def sessions_path_strategy(draw):
+    """Generate extension-less files under kiro.kiroagent/<hash>/ (not in index/)."""
+    hash_dir = draw(_hash_segment())
+    subdirs = draw(st.lists(
+        _safe_path_segment().filter(lambda s: s != "index"),
+        min_size=0,
+        max_size=2,
+    ))
+    filename = draw(_extensionless_name())
+    parts = ["User", "globalStorage", "kiro.kiroagent", hash_dir] + subdirs + [filename]
+    return "/".join(parts)
+
+
+@st.composite
+def per_workspace_index_path_strategy(draw):
+    """Generate files inside a per-workspace index/ subtree under a hash dir."""
+    hash_dir = draw(_hash_segment())
+    before = draw(st.lists(
+        _safe_path_segment().filter(lambda s: s != "index"),
+        min_size=0,
+        max_size=1,
+    ))
+    after = draw(st.lists(_safe_path_segment(), min_size=0, max_size=1))
+    filename = draw(_safe_filename())
+    parts = (
+        ["User", "globalStorage", "kiro.kiroagent", hash_dir]
+        + before
+        + ["index"]
+        + after
+        + [filename]
+    )
+    return "/".join(parts)
+
+
 class TestScanCategorizationProperty:
     """Property 4: Scan categorization correctness.
 
@@ -581,6 +679,8 @@ class TestScanCategorizationProperty:
         logs_path_strategy(),
         cache_path_strategy(),
         chats_path_strategy(),
+        sessions_path_strategy(),
+        per_workspace_index_path_strategy(),
         index_path_strategy(),
         temp_path_strategy(),
         history_path_strategy(),
@@ -590,6 +690,40 @@ class TestScanCategorizationProperty:
     def test_exactly_one_category(self, path_str):
         """Every file is classified into exactly one category (never None or empty)."""
         # Validates: Requirements 1.1
-        valid_categories = {"logs", "cache", "chats", "index", "temp", "history", "crash_reports", "uncategorized"}
+        valid_categories = {"logs", "cache", "chats", "sessions", "index", "temp", "history", "crash_reports", "uncategorized"}
         result = _classify_file(Path(path_str))
         assert result in valid_categories, f"Got unexpected category '{result}' for path '{path_str}'"
+
+
+# Feature: kiro-cleaner-python, Property 16: Session classification and safe-set exclusion
+
+
+class TestSessionClassificationProperty:
+    """Property 16: Session classification and safe-set exclusion.
+
+    Extension-less files under kiro.kiroagent/<hash>/ (not in an index/ subtree)
+    are 'sessions'; files inside any index/ subtree are 'index' (index precedence).
+    The 'sessions' category is never in the --safe set.
+    """
+
+    @pytest.mark.property
+    @settings(max_examples=100)
+    @given(path_str=sessions_path_strategy())
+    def test_sessions_categorization(self, path_str):
+        """**Validates: Requirements 12.1, 12.2**"""
+        result = _classify_file(Path(path_str))
+        assert result == "sessions", f"Expected 'sessions' for '{path_str}', got '{result}'"
+
+    @pytest.mark.property
+    @settings(max_examples=100)
+    @given(path_str=per_workspace_index_path_strategy())
+    def test_per_workspace_index_over_sessions(self, path_str):
+        """Index precedence: per-workspace index/ files are 'index'. **Validates: Requirements 12.3**"""
+        result = _classify_file(Path(path_str))
+        assert result == "index", f"Expected 'index' for '{path_str}', got '{result}'"
+
+    def test_sessions_excluded_from_safe_set(self):
+        """The --safe category set must never include 'sessions'. **Validates: Requirements 12.6**"""
+        from kiro_cleaner.cli import SAFE_CATEGORIES
+
+        assert "sessions" not in SAFE_CATEGORIES

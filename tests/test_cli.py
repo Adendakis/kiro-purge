@@ -167,6 +167,47 @@ class TestScanWorkflow:
         assert result.exit_code == 1
         assert "not found" in result.output.lower() or "ERROR" in result.output
 
+    def test_scan_shows_sessions_category(self, runner, mock_platform, populated_storage):
+        """The default scan output includes the new 'sessions' category."""
+        with patch("kiro_cleaner.cli.resolve_platform", return_value=mock_platform):
+            result = runner.invoke(main, ["scan"])
+
+        assert result.exit_code == 0
+        assert "sessions" in result.output
+
+    def test_scan_by_project_groups_by_folder(self, runner, mock_platform):
+        """scan --by-project groups storage by owning project folder."""
+        storage = mock_platform.kiro_storage
+        # Build a kiroagent workspace-hash dir with a session log referencing a project.
+        hash_dir = (
+            storage
+            / "User" / "globalStorage" / "kiro.kiroagent"
+            / "abc123def456abc123def456abc123de" / "inner"
+        )
+        hash_dir.mkdir(parents=True)
+        session = {
+            "executionId": "x",
+            "workflowType": "act",
+            "documentUri": "file:///Users/tester/projects/demo/main.py",
+            "padding": "z" * 30000,
+        }
+        (hash_dir / "6f65f441d88ae5611b78bd3a67637f07").write_text(json.dumps(session))
+
+        # Authoritative project folder via a workspaceStorage entry.
+        ws = storage / "User" / "workspaceStorage" / "0011223344556677"
+        ws.mkdir(parents=True)
+        (ws / "workspace.json").write_text(
+            json.dumps({"folder": "file:///Users/tester/projects/demo"})
+        )
+
+        with patch("kiro_cleaner.cli.resolve_platform", return_value=mock_platform):
+            result = runner.invoke(main, ["scan", "--by-project"])
+
+        assert result.exit_code == 0
+        assert "Project" in result.output
+        assert "/Users/tester/projects/demo" in result.output
+        assert "Sessions" in result.output
+
 
 class TestCleanWorkflow:
     """Test clean command integration."""

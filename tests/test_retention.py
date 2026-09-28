@@ -24,6 +24,9 @@ class TestDefaultRetention:
     def test_chats_retention_is_30_days(self):
         assert DEFAULT_RETENTION["chats"] == 30
 
+    def test_sessions_retention_is_90_days(self):
+        assert DEFAULT_RETENTION["sessions"] == 90
+
     def test_cache_retention_is_0(self):
         assert DEFAULT_RETENTION["cache"] == 0
 
@@ -34,7 +37,7 @@ class TestDefaultRetention:
         assert DEFAULT_RETENTION["index"] == 0
 
     def test_all_categories_present(self):
-        expected_keys = {"logs", "crash_reports", "history", "chats", "cache", "temp", "index"}
+        expected_keys = {"logs", "crash_reports", "history", "chats", "sessions", "cache", "temp", "index"}
         assert set(DEFAULT_RETENTION.keys()) == expected_keys
 
 

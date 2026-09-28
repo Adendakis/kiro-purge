@@ -14,10 +14,11 @@ from kiro_cleaner.chat_filter import ChatFilterCriteria, filter_chats
 from kiro_cleaner.cleaner import CleanResult, ErrorType, clean_files
 from kiro_cleaner.config_manager import load_config, update_config
 from kiro_cleaner.platform import kill_kiro_processes, resolve_platform
+from kiro_cleaner.project_view import ProjectView, build_project_view
 from kiro_cleaner.retention import filter_by_retention
 from kiro_cleaner.scanner import format_size, scan_storage
 
-VALID_CATEGORIES = ["logs", "cache", "chats", "index", "temp", "history", "crash_reports"]
+VALID_CATEGORIES = ["logs", "cache", "chats", "sessions", "index", "temp", "history", "crash_reports"]
 
 
 @click.group()
@@ -27,8 +28,48 @@ def main():
     pass
 
 
+def _display_project_view(view: ProjectView) -> None:
+    """Render a project-aggregated storage report (read-only)."""
+    import time
+
+    click.echo(
+        f"{'Project':<40} {'Total':>10} {'Chats':>10} "
+        f"{'Sessions':>10} {'Other':>10} {'Last activity':<16}"
+    )
+    click.echo(f"{'-' * 40} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 16}")
+
+    for group in view.groups:
+        chats = group.category_bytes.get("chats", 0)
+        sessions = group.category_bytes.get("sessions", 0)
+        other = group.total_bytes - chats - sessions
+        last = (
+            time.strftime("%Y-%m-%d", time.localtime(group.newest_mtime))
+            if group.newest_mtime is not None
+            else "-"
+        )
+        project = group.project
+        if len(project) > 40:
+            project = "..." + project[-37:]
+        click.echo(
+            f"{project:<40} "
+            f"{format_size(group.total_bytes):>10} "
+            f"{format_size(chats):>10} "
+            f"{format_size(sessions):>10} "
+            f"{format_size(other):>10} "
+            f"{last:<16}"
+        )
+
+    click.echo(f"{'-' * 40} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 16}")
+    click.echo(f"{'Total':<40} {format_size(view.total_bytes):>10}")
+
+
 @main.command()
-def scan():
+@click.option(
+    "--by-project",
+    is_flag=True,
+    help="Group storage usage by owning project folder (read-only report).",
+)
+def scan(by_project):
     """Scan Kiro storage and display disk usage by category."""
     platform_info = resolve_platform()
     kiro_storage = platform_info.kiro_storage
@@ -42,6 +83,13 @@ def scan():
         sys.exit(1)
 
     result = scan_storage(kiro_storage)
+
+    if by_project:
+        view = build_project_view(kiro_storage, result)
+        _display_project_view(view)
+        for warning in result.warnings:
+            click.echo(f"[WARN] {warning}", err=True)
+        return
 
     # Display category table
     # Header

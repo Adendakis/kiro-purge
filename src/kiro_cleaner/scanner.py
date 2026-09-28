@@ -35,9 +35,8 @@ _CATEGORY_DIRS: dict[str, list[str]] = {
 }
 
 # Special path-based categories
-_CHATS_PREFIX = "User/globalStorage/kiro.kiroagent"
+_KIROAGENT_PREFIX = "User/globalStorage/kiro.kiroagent"
 _CHATS_EXTENSION = ".chat"
-_INDEX_PREFIX = "User/globalStorage/kiro.kiroagent/index"
 
 # Temp file extensions
 _TEMP_EXTENSIONS = {".tmp", ".temp"}
@@ -46,7 +45,8 @@ _TEMP_EXTENSIONS = {".tmp", ".temp"}
 def _classify_file(relative_path: Path) -> str:
     """Classify a file into a category based on its relative path.
 
-    Priority: directory-based categories first, then temp by extension, then uncategorized.
+    Priority (most specific first): index -> chats -> sessions ->
+    directory-based categories -> temp -> uncategorized.
 
     Args:
         relative_path: Path relative to kiro_storage root.
@@ -61,16 +61,29 @@ def _classify_file(relative_path: Path) -> str:
     if not parts:
         return "uncategorized"
 
-    # Check index first (more specific than chats)
-    if rel_str.startswith(_INDEX_PREFIX + "/") or rel_str == _INDEX_PREFIX:
-        return "index"
+    under_kiroagent = (
+        rel_str.startswith(_KIROAGENT_PREFIX + "/") or rel_str == _KIROAGENT_PREFIX
+    )
 
-    # Check chats (files matching User/globalStorage/kiro.kiroagent/**/*.chat)
-    if (
-        rel_str.startswith(_CHATS_PREFIX + "/")
-        and relative_path.suffix == _CHATS_EXTENSION
-    ):
-        return "chats"
+    if under_kiroagent:
+        # Index: any 'index' directory component under the kiroagent tree
+        # (the top-level index/ and per-workspace <hash>/**/index/ subtrees).
+        # Checked first so per-workspace index data is never counted as sessions.
+        kiroagent_parts = parts[len(Path(_KIROAGENT_PREFIX).parts):]
+        # All but the final component are directories; a leading 'index'
+        # component means the file lives inside an index/ subtree.
+        if "index" in kiroagent_parts[:-1]:
+            return "index"
+
+        # Chats: legacy .chat files anywhere under the kiroagent tree
+        if relative_path.suffix == _CHATS_EXTENSION:
+            return "chats"
+
+        # Sessions: extension-less files under a workspace-hash dir.
+        # Require at least one directory level below kiroagent (the hash dir)
+        # so files sitting directly in kiroagent/ are not miscounted.
+        if relative_path.suffix == "" and len(kiroagent_parts) >= 2:
+            return "sessions"
 
     # Check directory-based categories
     for category, dirs in _CATEGORY_DIRS.items():
@@ -99,7 +112,7 @@ def scan_storage(kiro_storage: Path) -> ScanResult:
         ScanResult with categorized file information.
     """
     # Initialize category buckets
-    category_names = ["logs", "cache", "chats", "index", "temp", "history", "crash_reports"]
+    category_names = ["logs", "cache", "chats", "sessions", "index", "temp", "history", "crash_reports"]
     categories: dict[str, list[Path]] = {name: [] for name in category_names}
     category_bytes: dict[str, int] = {name: 0 for name in category_names}
     uncategorized_files: list[Path] = []

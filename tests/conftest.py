@@ -88,11 +88,47 @@ def mock_kiro_storage(tmp_path):
     }
     (agent_dir / "session2.chat").write_text(json.dumps(chat2))
 
-    # Index directory
+    # Index directory (top-level shared index)
     index_dir = agent_dir / "index"
     index_dir.mkdir()
     (index_dir / "vectors.bin").write_bytes(b"\x02" * 256)
     (index_dir / "metadata.json").write_text('{"entries": 100}')
+
+    # New-format per-workspace hash directory:
+    #   - extension-less session logs (sessions category)
+    #   - a per-workspace index/ subtree (index category, not sessions)
+    #   - a source-file snapshot with an extension (uncategorized)
+    ws_hash_dir = agent_dir / "abc123def456abc123def456abc123de"
+    session_subdir = ws_hash_dir / "b74907e363f71d10019976f9d968adcd"
+    session_subdir.mkdir(parents=True)
+    session_log = {
+        "executionId": "5e526712-4dc0-4acd-be9d-fc5f517e236b",
+        "workflowType": "spec-generation",
+        "status": "succeed",
+        "documentUri": "file:///Users/tester/projects/demo/requirements.md",
+        # Padding so the log exceeds the project-view sampling size threshold.
+        "padding": "z" * 30000,
+    }
+    (session_subdir / "6f65f441d88ae5611b78bd3a67637f07").write_text(json.dumps(session_log))
+    (session_subdir / "e33c97a74011e24bc555c917958a64bc").write_text(json.dumps(session_log))
+
+    # Per-workspace index subtree (must classify as index, not sessions)
+    ws_index_dir = ws_hash_dir / "index"
+    ws_index_dir.mkdir()
+    (ws_index_dir / "segment_0").write_bytes(b"\x06" * 128)
+
+    # Source-file snapshot with an extension (uncategorized)
+    (session_subdir / "snapshot.py").write_text("print('hello')\n")
+
+    # workspaceStorage entry giving the authoritative project folder for the
+    # session logs above (used by the project-aggregated view). state.vscdb is a
+    # protected file and is left as a small placeholder.
+    ws_storage = storage / "User" / "workspaceStorage" / "0011223344556677"
+    ws_storage.mkdir(parents=True)
+    (ws_storage / "workspace.json").write_text(
+        json.dumps({"folder": "file:///Users/tester/projects/demo"})
+    )
+    (ws_storage / "state.vscdb").write_bytes(b"\x00" * 32)
 
     # User/History/
     history_dir = storage / "User" / "History"

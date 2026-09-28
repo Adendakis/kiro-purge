@@ -16,7 +16,7 @@ kiro-cleaner clean --safe --dry-run --force
 
 # Run the safe clean 
 # deletes only cache, logs, crash reports, temp files
-# keeps context (index, chats and file edit history)
+# keeps context (index, chats, sessions/agent history, and file edit history)
 kiro-cleaner clean --safe --force
 ```
 
@@ -27,6 +27,8 @@ kiro-cleaner clean --safe --force
 - **Dry-run mode** — Preview what would be deleted before committing
 - **Safe clean** — One-flag cleanup of non-essential data that preserves all project context
 - **Category-based cleaning** — Target specific artefact types
+- **New + legacy layouts** — Recognizes both legacy `.chat` files and current extension-less session logs, plus per-workspace index data
+- **Project-aggregated view** — `scan --by-project` groups usage by the project each workspace belongs to, with last-activity dates
 - **Retention periods** — Only delete files older than configurable thresholds
 - **Chat filtering** — Filter conversations by content or date before cleaning
 - **Backup/restore** — Create archives before cleaning, restore if needed
@@ -46,6 +48,32 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
+### Install from source (non-editable)
+
+If you want a self-contained install that does not depend on the source
+checkout staying in place (unlike `-e`), use the bundled install script. It
+builds a wheel and installs it into your environment's `site-packages`:
+
+```bash
+git clone https://github.com/Adendakis/kiro-purge.git
+cd kiro-purge
+
+# macOS / Linux
+./install.sh              # build + install (runtime deps only)
+./install.sh --dev        # also install dev dependencies (pytest, hypothesis)
+./install.sh --user       # install into the user site (pip --user)
+./install.sh --uninstall  # uninstall
+
+# Windows
+install.bat               # build + install
+install.bat --dev         # also install dev dependencies
+install.bat --uninstall   # uninstall
+```
+
+The scripts are a thin wrapper over the standard build tooling — equivalent to
+`python -m build` followed by `pip install dist/*.whl`. Verify the install with
+`kiro-cleaner --version`.
+
 ## Commands
 
 ### `kiro-cleaner scan`
@@ -60,17 +88,43 @@ Output:
 ```
 Category            Files         Size
 ---------------- -------- ------------
-logs                  947      1.09 GB
-cache                 842    248.39 MB
+logs                 1083    130.23 MB
+cache                 630    139.78 MB
 chats               54029     10.15 GB
+sessions            10925     23.98 GB
 index               50498      4.08 GB
 temp                    0          0 B
-history             32835     394.8 MB
+history             44159    582.31 MB
 crash_reports          14     12.65 MB
-Uncategorized       65433     18.73 GB
+Uncategorized       64508      1.95 GB
 ---------------- -------- ------------
-Total              204598     34.68 GB
+Total              225846        41 GB
 ```
+
+#### Group usage by project
+
+Recent Kiro versions store conversations as extension-less **session logs** under
+`User/globalStorage/kiro.kiroagent/<workspace-hash>/` (the `sessions` category),
+rather than the legacy `.chat` files. Because these are keyed by opaque workspace
+hashes, use `--by-project` to see usage grouped by the project each hash belongs to,
+along with each project's last activity — a read-only report that never deletes:
+
+```bash
+kiro-cleaner scan --by-project
+```
+
+Output:
+```
+Project                                   Total      Chats   Sessions      Other Last activity
+---------------------------------------- ------- ---------- ---------- ---------- -------------
+/Users/you/projects/service-a            8.34 GB    5.94 GB    2.17 GB  233.92 MB 2026-02-05
+/Users/you/projects/service-b            5.33 GB     1.5 GB    3.67 GB  158.29 MB 2026-09-25
+(unresolved)                            14.47 GB   523.5 KB    8.55 GB    5.92 GB 2026-09-28
+```
+
+Projects are resolved from `workspace.json` and `state.vscdb` (read-only) and from
+`file://` references inside the session logs. Hashes that cannot be attributed are
+reported under `(unresolved)` so the group totals always sum to the scan total.
 
 ### `kiro-cleaner clean`
 
@@ -91,6 +145,11 @@ kiro-cleaner clean --safe --backup --force
 
 # Clean old chats (older than 30 days by default)
 kiro-cleaner clean --category chats --force
+
+# Clean old session logs / agent history (older than 90 days by default)
+# This is the largest category on most installs — deletes conversation history
+kiro-cleaner clean --category sessions --dry-run --force   # preview first
+kiro-cleaner clean --category sessions --keep-recent 180 --force
 
 # Override retention period
 kiro-cleaner clean --category logs --keep-recent 3 --force
@@ -174,8 +233,14 @@ kiro-cleaner config backup_dir /custom/path/
 | `crash_reports` | Crashpad dump files (Crashpad/) | ✅ Yes — for debugging Kiro itself |
 | `temp` | Temporary files (*.tmp, *.temp) | ✅ Yes — transient data |
 | `history` | File edit history (User/History/) | ⚠️ Caution — local undo snapshots |
-| `chats` | Conversation history (*.chat files) | ❌ No — your project context |
-| `index` | Code intelligence index (protected) | 🔒 Protected — never deleted |
+| `chats` | Legacy conversation history (*.chat files) | ❌ No — your project context |
+| `sessions` | Current agent/execution history (extension-less logs under kiro.kiroagent/&lt;hash&gt;/) | ❌ No — your conversation history; not in `--safe` |
+| `index` | Code intelligence index, top-level and per-workspace (protected) | 🔒 Protected — never deleted |
+
+> **`chats` vs `sessions`:** Kiro switched conversation storage from `.chat` files
+> (`chats`) to extension-less session logs (`sessions`) in early 2026. Both hold
+> conversation/agent history, so neither is included in `--safe`. Delete them
+> explicitly and age-gate with `--keep-recent` (see below).
 
 ## Protected Files & Directories
 
@@ -195,6 +260,7 @@ Files are only deleted if they're older than the retention threshold:
 | crash_reports | 30 days |
 | history | 30 days |
 | chats | 30 days |
+| sessions | 90 days |
 | cache | Always eligible |
 | temp | Always eligible |
 
