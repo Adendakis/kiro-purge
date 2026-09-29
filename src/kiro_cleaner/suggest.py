@@ -98,18 +98,25 @@ def _is_old(category: str, newest_mtime: float | None, now: float) -> bool:
     return age > retention
 
 
-def _clean_hint(category: str, newest_mtime: float | None, now: float) -> str:
-    """Build the exact `clean` command that would act on this history category."""
-    age = _age_days(newest_mtime, now)
-    # Suggest keeping anything newer than the group's own age, so the command
-    # targets exactly this stale data and nothing fresher.
-    if age is None:
-        return f"kiro-cleaner clean --category {category} --dry-run --force"
-    keep = max(1, int(age))
-    return (
-        f"kiro-cleaner clean --category {category} "
-        f"--keep-recent {keep} --dry-run --force"
-    )
+def _quote(value: str) -> str:
+    """Quote a value for a shell command if it contains spaces or parens."""
+    if any(c in value for c in " ()'\""):
+        escaped = value.replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
+def _project_clean_hint(group: str) -> str:
+    """Project-scoped clean command that targets exactly this group's files.
+
+    For a resolved project folder this is ``clean --project <folder>``; for the
+    unknown-project pseudo-group it is ``clean --project-group "(unknown-project)"``.
+    Uses --dry-run so the printed command only previews.
+    """
+    if group.startswith("/"):
+        return f"kiro-cleaner clean --project {_quote(group)} --dry-run"
+    # Pseudo-group (e.g. (unknown-project)).
+    return f"kiro-cleaner clean --project-group {_quote(group)} --dry-run"
 
 
 def build_suggestions(
@@ -174,9 +181,8 @@ def build_suggestions(
             reclaimable = sum(cats.values())
             hint = None
             if tier in (TIER_LIKELY_SAFE, TIER_REVIEW):
-                # One hint per history category present in this tier.
-                hint_cat = "sessions" if "sessions" in cats else next(iter(cats))
-                hint = _clean_hint(hint_cat, group.newest_mtime, now)
+                # Project-scoped command: deletes exactly this project's data.
+                hint = _project_clean_hint(group.project)
             items.append(
                 SuggestionItem(
                     group=group.project,

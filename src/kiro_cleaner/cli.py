@@ -14,7 +14,7 @@ from kiro_cleaner.chat_filter import ChatFilterCriteria, filter_chats
 from kiro_cleaner.cleaner import CleanResult, ErrorType, clean_files
 from kiro_cleaner.config_manager import load_config, update_config
 from kiro_cleaner.platform import kill_kiro_processes, resolve_platform
-from kiro_cleaner.project_view import ProjectView, build_project_view
+from kiro_cleaner.project_view import ProjectView, build_project_view, files_for_project
 from kiro_cleaner.retention import filter_by_retention
 from kiro_cleaner.scanner import format_size, scan_storage
 from kiro_cleaner.suggest import (
@@ -397,6 +397,8 @@ SAFE_CATEGORIES = ["cache", "logs", "crash_reports", "temp"]
     help="Category to clean (can be specified multiple times).",
 )
 @click.option("--safe", is_flag=True, help="Only clean safe categories (cache, logs, crash_reports, temp) that don't affect project context.")
+@click.option("--project", "project", default=None, help="Clean all non-protected files attributed to this project folder (mutually exclusive with --category/--safe).")
+@click.option("--project-group", "project_group", default=None, help='Clean a pseudo-group: "(unknown-project)" or "(global)".')
 @click.option("--dry-run", is_flag=True, help="Show what would be deleted without deleting.")
 @click.option("--force", is_flag=True, help="Skip confirmation prompts.")
 @click.option("--backup", is_flag=True, help="Create backup before cleaning.")
@@ -414,10 +416,27 @@ SAFE_CATEGORIES = ["cache", "logs", "crash_reports", "temp"]
     "--filter-after", type=str, default=None, help="Filter chats after date (YYYY-MM-DD)."
 )
 def clean(
-    category, safe, dry_run, force, backup, keep_recent, kill_kiro,
-    filter_content, filter_before, filter_after,
+    category, safe, project, project_group, dry_run, force, backup, keep_recent,
+    kill_kiro, filter_content, filter_before, filter_after,
 ):
-    """Clean artefacts by category with optional filtering."""
+    """Clean artefacts by category, or by project with --project."""
+    project_mode = project is not None or project_group is not None
+
+    # Project mode is mutually exclusive with category/safe selection.
+    if project_mode and (category or safe):
+        click.echo(
+            "[ERROR] --project/--project-group cannot be combined with "
+            "--category or --safe.",
+            err=True,
+        )
+        sys.exit(1)
+    if project is not None and project_group is not None:
+        click.echo(
+            "[ERROR] Use only one of --project or --project-group.",
+            err=True,
+        )
+        sys.exit(1)
+
     # Handle --safe flag: override categories with safe-only set
     if safe:
         if category:
@@ -466,6 +485,31 @@ def clean(
     # Step 4: Scan storage
     scan_result = scan_storage(kiro_storage)
 
+    files_after_retention: list[Path] = []
+
+    if project_mode:
+        # Project-scoped selection: all non-protected files attributed to the
+        # target project (or pseudo-group). Retention is only applied if the
+        # user explicitly passed --keep-recent (default: reclaim everything).
+        target = project if project is not None else project_group
+        click.echo(f"Cleaning project: {target}")
+        project_files = files_for_project(kiro_storage, scan_result, target)
+        if keep_recent is not None:
+            project_files = filter_by_retention(
+                project_files, "sessions", keep_recent_days=keep_recent
+            )
+        files_after_retention = project_files
+        if not files_after_retention:
+            click.echo(
+                f"No files found attributed to '{target}'. Nothing to do."
+            )
+            return
+        # Skip category selection / chat filtering; go straight to backup/confirm.
+        _run_deletion_pipeline(
+            files_after_retention, kiro_storage, dry_run, force, backup
+        )
+        return
+
     # Step 5: Determine categories to clean
     selected_categories: list[str] = list(category)
 
@@ -477,7 +521,6 @@ def clean(
             return
 
     # Step 6 & 7: Collect files and apply retention filter per category
-    files_after_retention: list[Path] = []
     for cat_name in selected_categories:
         cat_result = scan_result.categories.get(cat_name)
         if cat_result:
@@ -521,18 +564,32 @@ def clean(
         # Recombine: non-chat files + filtered chat files
         files_after_retention = non_chat_files + filtered_chats
 
-    # Step 9: If no files to delete, display message and exit
+    # Steps 9-13: shared backup/confirm/delete/summary pipeline.
     if not files_after_retention:
         click.echo("No files eligible for cleaning. Nothing to do.")
         return
+    _run_deletion_pipeline(files_after_retention, kiro_storage, dry_run, force, backup)
 
-    # Step 10: If --backup, create backup before deletion
+
+def _run_deletion_pipeline(
+    files: list[Path],
+    kiro_storage: Path,
+    dry_run: bool,
+    force: bool,
+    backup: bool,
+) -> None:
+    """Shared deletion pipeline: optional backup, confirm, delete, summary.
+
+    Protection is enforced inside ``clean_files`` regardless of flags, so both
+    category-based and project-scoped cleaning are equally safe.
+    """
+    # If --backup, create backup before deletion.
     if backup:
         app_config = load_config()
         backup_dir = Path(app_config.backup_dir).expanduser()
-        click.echo(f"Creating backup of {len(files_after_retention)} files...")
+        click.echo(f"Creating backup of {len(files)} files...")
         try:
-            backup_result = create_backup(files_after_retention, kiro_storage, backup_dir)
+            backup_result = create_backup(files, kiro_storage, backup_dir)
             click.echo(
                 f"Backup created: {backup_result.archive_path} "
                 f"({backup_result.file_count} files, "
@@ -545,11 +602,11 @@ def clean(
             )
             sys.exit(1)
 
-    # Step 11: If not --force and not --dry-run, display files and prompt for confirmation
+    # If not --force and not --dry-run, display files and prompt for confirmation.
     if not force and not dry_run:
-        click.echo(f"\nFiles to be deleted ({len(files_after_retention)} files):")
+        click.echo(f"\nFiles to be deleted ({len(files)} files):")
         total_size = 0
-        for f in files_after_retention:
+        for f in files:
             try:
                 size = f.stat().st_size
                 total_size += size
@@ -557,29 +614,23 @@ def clean(
             except OSError:
                 click.echo(f"  {f} (size unknown)")
 
-        click.echo(
-            f"\nTotal: {len(files_after_retention)} files, {format_size(total_size)}"
-        )
+        click.echo(f"\nTotal: {len(files)} files, {format_size(total_size)}")
 
         if not click.confirm("Proceed with deletion?"):
             click.echo("Aborted.")
             return
 
-    # Step 12: Call clean_files
-    result = clean_files(files_after_retention, dry_run=dry_run)
+    result = clean_files(files, dry_run=dry_run)
 
-    # Log protected file skips
     for protected_path in result.skipped_protected:
         click.echo(f"[SKIP] Protected: {protected_path}", err=True)
 
-    # Log errors
     for error in result.errors:
         click.echo(
             f"[ERROR] {error.error_type.value}: {error.path} - {error.message}",
             err=True,
         )
 
-    # Step 13: Display summary
     _display_clean_summary(result, dry_run)
 
 

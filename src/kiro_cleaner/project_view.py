@@ -235,17 +235,20 @@ def _hash_for_path(rel_path: Path) -> str | None:
     return remainder[0]
 
 
-def build_project_view(kiro_storage: Path, scan: ScanResult) -> ProjectView:
-    """Group all scanned files by owning project folder.
+def _rel_to(kiro_storage: Path, path: Path) -> Path:
+    try:
+        return path.relative_to(kiro_storage)
+    except ValueError:
+        return Path(path.name)
 
-    Every scanned file is placed in exactly one ProjectGroup. Files under a
-    kiroagent workspace-hash dir are grouped by that hash's resolved project;
-    the top-level kiroagent ``index/`` dir and everything outside the kiroagent
-    tree are grouped under "(global)" (framework-level data); a hash dir with no
-    recoverable project is grouped under "(unknown-project)". The sum of group
-    totals equals the total scanned bytes (Property 17).
+
+def _iter_file_attribution(kiro_storage: Path, scan: ScanResult):
+    """Yield ``(path, category, project_label)`` for every scanned file.
+
+    Shared attribution used by both ``build_project_view`` and
+    ``files_for_project`` so their grouping is guaranteed identical. Each hash
+    dir is resolved to a project once and cached.
     """
-    # Gather every scanned file with its category, from the flat scan result.
     all_files: list[tuple[Path, str]] = []
     for cat_name, cat_result in scan.categories.items():
         for f in cat_result.files:
@@ -253,7 +256,6 @@ def build_project_view(kiro_storage: Path, scan: ScanResult) -> ProjectView:
     for f in scan.uncategorized.files:
         all_files.append((f, "uncategorized"))
 
-    # Resolve each distinct kiroagent hash once (attribution is per hash dir).
     kiroagent_root = kiro_storage / _KIROAGENT_PREFIX
     known_roots = known_project_roots(kiro_storage)
     hash_to_project: dict[str, str] = {}
@@ -269,10 +271,52 @@ def build_project_view(kiro_storage: Path, scan: ScanResult) -> ProjectView:
             hash_to_project[h] = resolved or UNKNOWN_PROJECT_GROUP
         return hash_to_project[h]
 
+    for path, category in all_files:
+        rel = _rel_to(kiro_storage, path)
+        yield path, category, project_for(rel)
+
+
+def files_for_project(
+    kiro_storage: Path,
+    scan: ScanResult,
+    target: str,
+    exclude_categories: set[str] | None = None,
+) -> list[Path]:
+    """Return scanned files attributed to a single project group.
+
+    ``target`` is a resolved project folder path, or one of the pseudo-group
+    labels :data:`GLOBAL_GROUP` / :data:`UNKNOWN_PROJECT_GROUP`. By default the
+    protected ``index`` category is excluded so a project-scoped clean never
+    targets code-intelligence data. Deletion-time protection still applies as a
+    second line of defence.
+    """
+    if exclude_categories is None:
+        exclude_categories = {"index"}
+    target = target.rstrip("/") if target.startswith("/") else target
+    selected: list[Path] = []
+    for path, category, project in _iter_file_attribution(kiro_storage, scan):
+        if category in exclude_categories:
+            continue
+        proj_norm = project.rstrip("/") if project.startswith("/") else project
+        if proj_norm == target:
+            selected.append(path)
+    return selected
+
+
+def build_project_view(kiro_storage: Path, scan: ScanResult) -> ProjectView:
+    """Group all scanned files by owning project folder.
+
+    Every scanned file is placed in exactly one ProjectGroup. Files under a
+    kiroagent workspace-hash dir are grouped by that hash's resolved project;
+    the top-level kiroagent ``index/`` dir and everything outside the kiroagent
+    tree are grouped under "(global)" (framework-level data); a hash dir with no
+    recoverable project is grouped under "(unknown-project)". The sum of group
+    totals equals the total scanned bytes (Property 17).
+    """
     groups: dict[str, ProjectGroup] = {}
     total_bytes = 0
 
-    for path, category in all_files:
+    for path, category, project in _iter_file_attribution(kiro_storage, scan):
         try:
             st = path.stat()
         except OSError:
@@ -280,12 +324,7 @@ def build_project_view(kiro_storage: Path, scan: ScanResult) -> ProjectView:
         size, mtime = st.st_size, st.st_mtime
         total_bytes += size
 
-        try:
-            rel = path.relative_to(kiro_storage)
-        except ValueError:
-            rel = Path(path.name)
-
-        project = project_for(rel)
+        rel = _rel_to(kiro_storage, path)
         group = groups.get(project)
         if group is None:
             group = ProjectGroup(project=project)

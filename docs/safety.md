@@ -69,6 +69,24 @@ This will never touch:
 - Index data (code intelligence)
 - Configuration files
 
+## Project-Scoped Clean
+
+`clean --project <folder>` removes **all non-protected files attributed to that
+project** (chats, sessions, and snapshots across the project's workspace-hash
+directories) in one command — useful when you abandon or delete a project.
+
+- It is mutually exclusive with `--category` / `--safe`.
+- Protection still applies: the code-intelligence `index/`, `state.vscdb`, and
+  other protected names are **never** deleted, even in project mode.
+- Without `--keep-recent` it reclaims the project's history in full (an abandoned
+  project's data is reclaimable regardless of age); with `--keep-recent N` it
+  additionally preserves files newer than N days.
+- `clean --project-group "(unknown-project)"` cleans the unattributed session
+  bucket; `"(global)"` targets framework-level data.
+
+`scan --suggest` prints the exact `clean --project …` command for each
+reclaimable project, so the preview lists precisely that project's files.
+
 ## `--dry-run` and `--force`
 
 These two flags are independent and control *previewing* and *prompting*

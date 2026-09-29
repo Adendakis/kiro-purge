@@ -162,8 +162,8 @@ To actually delete, run the same command WITHOUT --dry-run.
 
    PROJECT                        SIZE  REASON                            COMMAND
    ------------------------  ---------  --------------------------------  -------
-   /Users/you/old-project      8.11 GB  project folder no longer exists   kiro-cleaner clean --category sessions --keep-recent 235 --dry-run --force
-   /Users/you/other-project  382.68 MB  project folder no longer exists   kiro-cleaner clean --category sessions --keep-recent 216 --dry-run --force
+   /Users/you/old-project      8.11 GB  project folder no longer exists   kiro-cleaner clean --project /Users/you/old-project --dry-run
+   /Users/you/other-project  382.68 MB  project folder no longer exists   kiro-cleaner clean --project /Users/you/other-project --dry-run
 ...
 ------------------------------------------------------------------------
 Potentially reclaimable (safe + likely-safe + review): 20.71 GB
@@ -186,14 +186,18 @@ Safety tiers:
 | **keep** | Protected data, the shared `index/`, and anything newer than its retention period |
 
 **Acting on a suggestion.** The report is advisory — it never deletes. Copy the
-`COMMAND` for the project you want to reclaim:
+`COMMAND` for the project you want to reclaim. It is a **project-scoped** command
+(`clean --project <folder>`) that targets exactly that project's data, so the
+`--dry-run` preview lists precisely the files that would be removed for that
+project:
 
 - As printed (with `--dry-run`) it **previews**: lists the files it would delete
   and the total size, but removes nothing.
-- Remove `--dry-run` to **actually delete** (keeping `--force` deletes without a
-  prompt; removing both `--dry-run` and `--force` deletes after a yes/no prompt).
+- Remove `--dry-run` to **actually delete** (the plain command prompts for
+  confirmation; add `--force` to skip the prompt).
 
-`clean` always enforces retention and protection rules regardless of flags.
+`clean` always excludes protected data (the code-intelligence `index/`,
+`state.vscdb`, etc.) regardless of flags.
 
 ### `kiro-cleaner clean`
 
@@ -220,6 +224,14 @@ kiro-cleaner clean --category chats --force
 kiro-cleaner clean --category sessions --dry-run --force   # preview first
 kiro-cleaner clean --category sessions --keep-recent 180 --force
 
+# Delete ALL Kiro history for one project (chats + sessions + snapshots),
+# e.g. a project you have abandoned or deleted. Protected index data is kept.
+kiro-cleaner clean --project /path/to/old-project --dry-run   # preview
+kiro-cleaner clean --project /path/to/old-project             # prompts, then deletes
+
+# Clean the unattributed session bucket
+kiro-cleaner clean --project-group "(unknown-project)" --dry-run
+
 # Override retention period
 kiro-cleaner clean --category logs --keep-recent 3 --force
 
@@ -243,6 +255,8 @@ kiro-cleaner clean --safe --kill-kiro --force
 |------|-------------|
 | `--safe` | Clean only safe categories (cache, logs, crash_reports, temp) |
 | `--category` | Specify category to clean (repeatable) |
+| `--project PATH` | Clean all non-protected files for one project folder (mutually exclusive with `--category`/`--safe`) |
+| `--project-group LABEL` | Clean a pseudo-group: `"(unknown-project)"` or `"(global)"` |
 | `--dry-run` | Show what would be deleted without deleting |
 | `--force` | Skip confirmation prompts |
 | `--backup` | Create tar.gz backup before cleaning |

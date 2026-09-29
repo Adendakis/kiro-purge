@@ -212,8 +212,9 @@ class TestScanWorkflow:
         assert result.exit_code == 0
         assert "SAFE" in result.output
         assert "reclaimable" in result.output.lower()
-        # /Users/tester/deleted-project has no folder on disk -> likely-safe hint.
-        assert "clean --category" in result.output
+        # /Users/tester/deleted-project has no folder on disk -> project-scoped hint.
+        assert "clean --project" in result.output
+        assert "/Users/tester/deleted-project" in result.output
 
     def test_scan_by_project_groups_by_folder(self, runner, mock_platform):
         """scan --by-project groups storage by owning project folder."""
@@ -270,6 +271,90 @@ class TestCleanWorkflow:
         # CachedData and GPUCache should also be cleaned
         assert not (storage / "CachedData" / "index.json").exists()
         assert not (storage / "GPUCache" / "gpu_data").exists()
+
+    def _seed_project(self, storage, project="/Users/tester/demo-proj"):
+        """Create a kiroagent hash dir resolvable to `project`, plus an index/."""
+        hd = (
+            storage / "User" / "globalStorage" / "kiro.kiroagent"
+            / "abc0011223344556677889900aabbccd" / "inner"
+        )
+        hd.mkdir(parents=True)
+        (hd / "spec.json").write_text(
+            json.dumps({"documentUri": f"file://{project}/requirements.md"})
+        )
+        (hd / "session_a").write_bytes(b"\x00" * 2048)
+        (hd / "session_b").write_bytes(b"\x00" * 1024)
+        # A per-workspace index/ that must be protected from project-scoped delete.
+        idx = hd.parent / "index"
+        idx.mkdir()
+        (idx / "segment_0").write_bytes(b"\x00" * 4096)
+        ws = storage / "User" / "workspaceStorage" / "1122334455667788"
+        ws.mkdir(parents=True)
+        (ws / "workspace.json").write_text(
+            json.dumps({"folder": f"file://{project}"})
+        )
+        return hd, idx
+
+    def test_clean_project_dry_run_scoped(self, runner, mock_platform):
+        """clean --project --dry-run reports the project and deletes nothing."""
+        storage = mock_platform.kiro_storage
+        hd, idx = self._seed_project(storage)
+
+        with patch("kiro_cleaner.cli.resolve_platform", return_value=mock_platform):
+            result = runner.invoke(
+                main, ["clean", "--project", "/Users/tester/demo-proj", "--dry-run"]
+            )
+
+        assert result.exit_code == 0
+        assert "Cleaning project: /Users/tester/demo-proj" in result.output
+        assert "Would delete" in result.output
+        # Nothing actually removed.
+        assert (hd / "session_a").exists()
+        assert (idx / "segment_0").exists()
+
+    def test_clean_project_force_deletes_only_project(self, runner, mock_platform):
+        """clean --project --force deletes the project's files but not its index."""
+        storage = mock_platform.kiro_storage
+        hd, idx = self._seed_project(storage)
+        # An unrelated project's file that must survive.
+        other = (
+            storage / "User" / "globalStorage" / "kiro.kiroagent"
+            / "ffffeeeeddddccccbbbbaaaa99998888" / "s"
+        )
+        other.mkdir(parents=True)
+        (other / "keep_me").write_bytes(b"\x00" * 512)
+
+        with patch("kiro_cleaner.cli.resolve_platform", return_value=mock_platform):
+            result = runner.invoke(
+                main, ["clean", "--project", "/Users/tester/demo-proj", "--force"]
+            )
+
+        assert result.exit_code == 0
+        assert not (hd / "session_a").exists()      # project data deleted
+        assert not (hd / "session_b").exists()
+        assert (idx / "segment_0").exists()          # index protected
+        assert (other / "keep_me").exists()          # other project untouched
+
+    def test_clean_project_mutually_exclusive_with_category(self, runner, mock_platform):
+        """--project cannot be combined with --category."""
+        with patch("kiro_cleaner.cli.resolve_platform", return_value=mock_platform):
+            result = runner.invoke(main, [
+                "clean", "--project", "/Users/tester/demo-proj",
+                "--category", "cache", "--force",
+            ])
+        assert result.exit_code == 1
+        assert "mutually" in result.output.lower() or "cannot be combined" in result.output.lower()
+
+    def test_clean_project_not_found_exits_cleanly(self, runner, mock_platform):
+        """A --project with no attributed files reports nothing to do."""
+        storage = mock_platform.kiro_storage
+        self._seed_project(storage)
+        with patch("kiro_cleaner.cli.resolve_platform", return_value=mock_platform):
+            result = runner.invoke(
+                main, ["clean", "--project", "/Users/tester/no-such-project", "--force"]
+            )
+        assert result.exit_code == 0
+        assert "No files found" in result.output
 
     def test_clean_preserves_protected_files(self, runner, mock_platform, populated_storage):
         """Clean should never delete protected files."""

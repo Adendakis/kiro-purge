@@ -1,6 +1,7 @@
 """Tests for the project_view module (project-aggregated view)."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from kiro_cleaner.project_view import (
     ProjectView,
     _project_root_fallback,
     build_project_view,
+    files_for_project,
     resolve_project_for_hash,
 )
 from kiro_cleaner.scanner import scan_storage
@@ -186,6 +188,41 @@ class TestBuildProjectView:
         assert UNKNOWN_PROJECT_GROUP in names
         # Nothing should have been mislabeled as a real project.
         assert not any(n.startswith("/Users") for n in names)
+
+
+class TestFilesForProject:
+    """Tests for project-scoped file selection."""
+
+    def test_selects_resolved_project_files(self, mock_kiro_storage):
+        scan = scan_storage(mock_kiro_storage)
+        files = files_for_project(mock_kiro_storage, scan, "/Users/tester/projects/demo")
+        # The conftest session dir (2 session logs + 1 snapshot.py) resolves here.
+        assert len(files) >= 1
+        # Every selected file lives under the kiroagent tree for this project.
+        assert all("kiro.kiroagent" in str(f) for f in files)
+
+    def test_excludes_index_by_default(self, mock_kiro_storage):
+        scan = scan_storage(mock_kiro_storage)
+        files = files_for_project(mock_kiro_storage, scan, "/Users/tester/projects/demo")
+        # The per-workspace index/ subtree must NOT be selected (protected).
+        assert not any(f"{os.sep}index{os.sep}" in str(f) for f in files)
+
+    def test_trailing_slash_normalized(self, mock_kiro_storage):
+        scan = scan_storage(mock_kiro_storage)
+        a = files_for_project(mock_kiro_storage, scan, "/Users/tester/projects/demo")
+        b = files_for_project(mock_kiro_storage, scan, "/Users/tester/projects/demo/")
+        assert set(a) == set(b)
+
+    def test_unknown_project_missing_returns_empty(self, mock_kiro_storage):
+        scan = scan_storage(mock_kiro_storage)
+        files = files_for_project(mock_kiro_storage, scan, "/Users/tester/does-not-exist")
+        assert files == []
+
+    def test_global_group_selects_framework_files(self, mock_kiro_storage):
+        scan = scan_storage(mock_kiro_storage)
+        files = files_for_project(mock_kiro_storage, scan, GLOBAL_GROUP)
+        # (global) holds logs/cache/history etc. — non-empty in the mock tree.
+        assert len(files) >= 1
 
 
 # Feature: kiro-cleaner-python, Property 17: Project-view partition invariant

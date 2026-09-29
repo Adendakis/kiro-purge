@@ -107,15 +107,25 @@ class TestTierAssignment:
         report = build_suggestions(Path("/nonexistent"), _view(g), now=NOW)
         assert _tier_of(report, UNKNOWN_PROJECT_GROUP) == {TIER_REVIEW}
 
-    def test_clean_hint_present_for_actionable_tiers(self, tmp_path):
+    def test_clean_hint_is_project_scoped(self, tmp_path):
         gone = str(tmp_path / "gone")
         g = _group(gone, {"sessions": 2000}, days_ago=300)
         report = build_suggestions(tmp_path, _view(g), now=NOW)
         item = next(it for it in report.items if it.group == gone)
         assert item.clean_hint is not None
-        assert "--category sessions" in item.clean_hint
-        assert "--keep-recent" in item.clean_hint
+        # Project-scoped command that names this exact project, not a category.
+        assert "--project" in item.clean_hint
+        assert gone in item.clean_hint
+        assert "--category" not in item.clean_hint
         assert "--dry-run" in item.clean_hint
+
+    def test_unknown_project_hint_uses_project_group(self):
+        g = _group(UNKNOWN_PROJECT_GROUP, {"sessions": 4000}, days_ago=400)
+        report = build_suggestions(Path("/nonexistent"), _view(g), now=NOW)
+        item = next(it for it in report.items if it.group == UNKNOWN_PROJECT_GROUP)
+        assert item.clean_hint is not None
+        assert "--project-group" in item.clean_hint
+        assert "(unknown-project)" in item.clean_hint
 
     def test_mixed_group_splits_across_tiers(self, tmp_path):
         """A group with both disposable and old-history bytes splits safe + likely-safe."""
