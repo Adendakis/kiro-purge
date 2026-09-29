@@ -118,13 +118,25 @@ Output:
 Project                                   Total      Chats   Sessions      Other Last activity
 ---------------------------------------- ------- ---------- ---------- ---------- -------------
 /Users/you/projects/service-a            8.34 GB    5.94 GB    2.17 GB  233.92 MB 2026-02-05
-/Users/you/projects/service-b            5.33 GB     1.5 GB    3.67 GB  158.29 MB 2026-09-25
-(unresolved)                            14.47 GB   523.5 KB    8.55 GB    5.92 GB 2026-09-28
+/Users/you/pydantic-acm                  6.56 GB        0 B    6.45 GB  106.24 MB 2026-09-11
+(global)                                 5.66 GB        0 B        0 B    5.66 GB 2026-09-29
+(unknown-project)                        2.26 GB   523.5 KB    2.09 GB  170.71 MB 2026-09-23
 ```
 
-Projects are resolved from `workspace.json` and `state.vscdb` (read-only) and from
-`file://` references inside the session logs. Hashes that cannot be attributed are
-reported under `(unresolved)` so the group totals always sum to the scan total.
+Projects are resolved (read-only) in this order of preference:
+
+1. the `folder` field of `workspace.json`,
+2. a `file://` reference in the workspace `state.vscdb`,
+3. the `documentUri` of any `.json` metadata file in the workspace-hash directory,
+4. a `file://` reference inside the session logs themselves.
+
+Everything is placed in exactly one group so the totals always sum to the scan
+total. Two groups are not real projects:
+
+- **`(global)`** — Kiro-framework-level data that belongs to no single project:
+  logs, cache, history, crash reports, and the top-level shared `index/`.
+- **`(unknown-project)`** — per-workspace session data whose owning project could
+  not be recovered (some session logs record no file paths at all).
 
 ### `kiro-cleaner clean`
 
