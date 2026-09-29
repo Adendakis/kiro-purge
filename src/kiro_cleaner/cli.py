@@ -79,16 +79,32 @@ _TIER_HEADINGS = {
     TIER_KEEP: "KEEP — recent, protected, or otherwise not suggested",
 }
 
+# One-line, human-readable "why is this suggested" per tier.
+_TIER_REASONS = {
+    TIER_SAFE: "disposable, rebuilt automatically",
+    TIER_LIKELY_SAFE: "project folder no longer exists on disk",
+    TIER_REVIEW: "old history; project still exists or is unattributed",
+}
+
 
 def _display_suggestions(report: SuggestionReport) -> None:
-    """Render the read-only safety-tiered deletion suggestions."""
-    click.echo("Deletion suggestions (read-only — nothing is deleted)\n")
+    """Render the read-only safety-tiered deletion suggestions as tables."""
+    click.echo("Deletion suggestions (read-only — nothing was deleted)\n")
+    click.echo(
+        "Pick a row from a table below and run its COMMAND to preview that "
+        "deletion.\nThe printed commands use --dry-run, so they only show what "
+        "would be removed.\nTo actually delete, run the same command WITHOUT "
+        "--dry-run.\n"
+    )
 
     reclaimable = (
         report.tier_totals.get(TIER_SAFE, 0)
         + report.tier_totals.get(TIER_LIKELY_SAFE, 0)
         + report.tier_totals.get(TIER_REVIEW, 0)
     )
+
+    # Column widths for the per-tier tables.
+    proj_w, size_w, reason_w = 40, 11, 38
 
     for tier in TIER_ORDER:
         tier_items = [it for it in report.items if it.tier == tier]
@@ -97,27 +113,50 @@ def _display_suggestions(report: SuggestionReport) -> None:
             continue
 
         click.echo(f"== {_TIER_HEADINGS[tier]} ==")
-        click.echo(f"   Total: {format_size(tier_total)}")
-        # Show contributing groups (skip keep detail to reduce noise).
-        if tier != TIER_KEEP:
-            for it in tier_items:
-                group = it.group
-                if len(group) > 46:
-                    group = "..." + group[-43:]
-                note = ""
-                if it.tier == TIER_LIKELY_SAFE:
-                    note = "  [folder missing]"
-                click.echo(f"     {group:<46} {format_size(it.reclaimable_bytes):>10}{note}")
-                if it.clean_hint:
-                    click.echo(f"       -> {it.clean_hint}")
+        click.echo(f"   Total: {format_size(tier_total)}\n")
+
+        # KEEP is informational only — no actionable table.
+        if tier == TIER_KEEP:
+            click.echo()
+            continue
+
+        reason = _TIER_REASONS.get(tier, "")
+        # Table header.
+        click.echo(
+            f"   {'PROJECT':<{proj_w}} {'SIZE':>{size_w}}  "
+            f"{'REASON':<{reason_w}} COMMAND"
+        )
+        click.echo(
+            f"   {'-' * proj_w} {'-' * size_w}  {'-' * reason_w} {'-' * 7}"
+        )
+        for it in tier_items:
+            project = it.group
+            if len(project) > proj_w:
+                project = "..." + project[-(proj_w - 3):]
+            command = it.clean_hint or "—"
+            click.echo(
+                f"   {project:<{proj_w}} "
+                f"{format_size(it.reclaimable_bytes):>{size_w}}  "
+                f"{reason:<{reason_w}} {command}"
+            )
         click.echo()
 
-    click.echo(f"{'-' * 60}")
-    click.echo(f"Potentially reclaimable (safe + likely-safe + review): {format_size(reclaimable)}")
-    click.echo(f"Total scanned: {format_size(report.total_bytes)}")
+    click.echo(f"{'-' * 72}")
     click.echo(
-        "\nSuggestions are advisory. Run the printed `clean` command "
-        "(drop --dry-run to delete) to act on any of them."
+        f"Potentially reclaimable (safe + likely-safe + review): "
+        f"{format_size(reclaimable)}"
+    )
+    click.echo(f"Total scanned: {format_size(report.total_bytes)}\n")
+    click.echo("How the commands work:")
+    click.echo(
+        "  --dry-run   preview only; lists what would be deleted, deletes nothing"
+    )
+    click.echo(
+        "  --force     skip the confirmation prompt (delete right away)"
+    )
+    click.echo(
+        "  Preview:  keep --dry-run (shown).   Delete:  remove --dry-run.\n"
+        "  Delete with a prompt to confirm:  remove both --dry-run and --force."
     )
 
 

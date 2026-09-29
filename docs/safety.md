@@ -7,9 +7,10 @@ Kiro Cleaner is designed with a "fail-safe" approach. The tool prioritizes data 
 1. **Protected files are never deleted** — regardless of flags or categories
 2. **Individual file deletion** — no `rm -rf` style directory removal
 3. **Errors don't stop the operation** — failed deletions are logged and skipped
-4. **Dry-run by default** — use `--dry-run` to preview any operation
-5. **Confirmation required** — unless `--force` is explicitly provided
+4. **Preview available** — `--dry-run` shows what would be deleted without deleting
+5. **Confirmation required** — a yes/no prompt is shown unless `--force` is given
 6. **Backup before delete** — `--backup` creates an archive first
+7. **Advisory suggestions** — `scan --suggest` recommends what to delete but never deletes
 
 ## Protected Files
 
@@ -68,14 +69,27 @@ This will never touch:
 - Index data (code intelligence)
 - Configuration files
 
-## Dry-Run Mode
+## `--dry-run` and `--force`
 
-Always preview before committing:
+These two flags are independent and control *previewing* and *prompting*
+separately:
 
-```bash
-# See exactly what would be deleted
-kiro-cleaner clean --safe --dry-run --force
-```
+- **`--dry-run`** — simulation only. Lists every file that would be deleted and
+  the total size, but **deletes nothing**. The summary reads "Would delete: …".
+- **`--force`** — skips the interactive "Proceed with deletion?" prompt.
+
+The four combinations:
+
+| Command | Behavior |
+|---------|----------|
+| `clean …` | shows the file list, **prompts** yes/no, then deletes |
+| `clean … --dry-run` | shows what would be deleted, **deletes nothing**, no prompt |
+| `clean … --force` | **deletes immediately**, no prompt ⚠️ |
+| `clean … --dry-run --force` | shows what would be deleted, **deletes nothing** (dry-run wins) |
+
+So `--dry-run --force` — the combination printed by `scan --suggest` — is the
+**safe non-interactive preview**: it runs without prompting and deletes nothing.
+To actually delete, remove `--dry-run`.
 
 In dry-run mode:
 - No files are deleted

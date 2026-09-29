@@ -149,21 +149,31 @@ the exact `clean` command you could run to act on it.
 kiro-cleaner scan --suggest
 ```
 
-Output (abridged):
+Each actionable tier is printed as a table with the project, its size, the
+reason it was suggested, and the exact command to run:
+
 ```
-== SAFE — framework-disposable (cache, logs, crash reports, temp) ==
-   Total: 304.19 MB
+Pick a row from a table below and run its COMMAND to preview that deletion.
+The printed commands use --dry-run, so they only show what would be removed.
+To actually delete, run the same command WITHOUT --dry-run.
+
 == LIKELY SAFE — history of projects whose folder no longer exists ==
    Total: 11.83 GB
-     /Users/you/old-project                            8.11 GB  [folder missing]
-       -> kiro-cleaner clean --category sessions --keep-recent 235 --dry-run --force
-== REVIEW — old history for existing or unattributed projects ==
-   Total: 8.57 GB
-== KEEP — recent, protected, or otherwise not suggested ==
-   Total: 20.3 GB
-------------------------------------------------------------
+
+   PROJECT                        SIZE  REASON                            COMMAND
+   ------------------------  ---------  --------------------------------  -------
+   /Users/you/old-project      8.11 GB  project folder no longer exists   kiro-cleaner clean --category sessions --keep-recent 235 --dry-run --force
+   /Users/you/other-project  382.68 MB  project folder no longer exists   kiro-cleaner clean --category sessions --keep-recent 216 --dry-run --force
+...
+------------------------------------------------------------------------
 Potentially reclaimable (safe + likely-safe + review): 20.71 GB
 Total scanned: 41.01 GB
+
+How the commands work:
+  --dry-run   preview only; lists what would be deleted, deletes nothing
+  --force     skip the confirmation prompt (delete right away)
+  Preview:  keep --dry-run (shown).   Delete:  remove --dry-run.
+  Delete with a prompt to confirm:  remove both --dry-run and --force.
 ```
 
 Safety tiers:
@@ -175,9 +185,15 @@ Safety tiers:
 | **review** | Old chats/sessions for a project that **still exists**, or old `(unknown-project)` data — a judgment call |
 | **keep** | Protected data, the shared `index/`, and anything newer than its retention period |
 
-The report is advisory. To act on a suggestion, run the printed `clean` command
-(drop `--dry-run` to actually delete); `clean` still enforces all retention and
-protection rules.
+**Acting on a suggestion.** The report is advisory — it never deletes. Copy the
+`COMMAND` for the project you want to reclaim:
+
+- As printed (with `--dry-run`) it **previews**: lists the files it would delete
+  and the total size, but removes nothing.
+- Remove `--dry-run` to **actually delete** (keeping `--force` deletes without a
+  prompt; removing both `--dry-run` and `--force` deletes after a yes/no prompt).
+
+`clean` always enforces retention and protection rules regardless of flags.
 
 ### `kiro-cleaner clean`
 
