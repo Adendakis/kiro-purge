@@ -175,6 +175,46 @@ class TestScanWorkflow:
         assert result.exit_code == 0
         assert "sessions" in result.output
 
+    def test_scan_suggest_reports_tiers(self, runner, mock_platform):
+        """scan --suggest prints safety tiers and is read-only."""
+        storage = mock_platform.kiro_storage
+        # Some disposable data (safe tier) and an old session for a missing project.
+        logs = storage / "logs"
+        logs.mkdir()
+        (logs / "a.log").write_text("log data")
+
+        hash_dir = (
+            storage / "User" / "globalStorage" / "kiro.kiroagent"
+            / "ffee0011223344556677889900aabbcc" / "inner"
+        )
+        hash_dir.mkdir(parents=True)
+        session = {
+            "documentUri": "file:///Users/tester/deleted-project/main.py",
+            "padding": "z" * 30000,
+        }
+        (hash_dir / "spec.json").write_text(json.dumps(session))
+        (hash_dir / "biglog").write_bytes(b"\x00" * 4096)
+        # Age the session data beyond retention.
+        old = time.time() - 300 * 86400
+        for p in hash_dir.rglob("*"):
+            if p.is_file():
+                os.utime(p, (old, old))
+
+        ws = storage / "User" / "workspaceStorage" / "aabbccddeeff0011"
+        ws.mkdir(parents=True)
+        (ws / "workspace.json").write_text(
+            json.dumps({"folder": "file:///Users/tester/deleted-project"})
+        )
+
+        with patch("kiro_cleaner.cli.resolve_platform", return_value=mock_platform):
+            result = runner.invoke(main, ["scan", "--suggest"])
+
+        assert result.exit_code == 0
+        assert "SAFE" in result.output
+        assert "reclaimable" in result.output.lower()
+        # /Users/tester/deleted-project has no folder on disk -> likely-safe hint.
+        assert "clean --category" in result.output
+
     def test_scan_by_project_groups_by_folder(self, runner, mock_platform):
         """scan --by-project groups storage by owning project folder."""
         storage = mock_platform.kiro_storage

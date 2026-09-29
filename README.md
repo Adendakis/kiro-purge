@@ -29,6 +29,7 @@ kiro-cleaner clean --safe --force
 - **Category-based cleaning** — Target specific artefact types
 - **New + legacy layouts** — Recognizes both legacy `.chat` files and current extension-less session logs, plus per-workspace index data
 - **Project-aggregated view** — `scan --by-project` groups usage by the project each workspace belongs to, with last-activity dates
+- **Safety-tiered suggestions** — `scan --suggest` ranks reclaimable storage by confidence (safe / likely-safe / review / keep), flagging history of deleted projects
 - **Retention periods** — Only delete files older than configurable thresholds
 - **Chat filtering** — Filter conversations by content or date before cleaning
 - **Backup/restore** — Create archives before cleaning, restore if needed
@@ -137,6 +138,46 @@ total. Two groups are not real projects:
   logs, cache, history, crash reports, and the top-level shared `index/`.
 - **`(unknown-project)`** — per-workspace session data whose owning project could
   not be recovered (some session logs record no file paths at all).
+
+#### Suggest what is safe to delete
+
+`scan --suggest` produces a read-only report that ranks storage by how confident
+the tool is that it can be removed. Nothing is deleted — each suggestion prints
+the exact `clean` command you could run to act on it.
+
+```bash
+kiro-cleaner scan --suggest
+```
+
+Output (abridged):
+```
+== SAFE — framework-disposable (cache, logs, crash reports, temp) ==
+   Total: 304.19 MB
+== LIKELY SAFE — history of projects whose folder no longer exists ==
+   Total: 11.83 GB
+     /Users/you/old-project                            8.11 GB  [folder missing]
+       -> kiro-cleaner clean --category sessions --keep-recent 235 --dry-run --force
+== REVIEW — old history for existing or unattributed projects ==
+   Total: 8.57 GB
+== KEEP — recent, protected, or otherwise not suggested ==
+   Total: 20.3 GB
+------------------------------------------------------------
+Potentially reclaimable (safe + likely-safe + review): 20.71 GB
+Total scanned: 41.01 GB
+```
+
+Safety tiers:
+
+| Tier | What it contains |
+|------|------------------|
+| **safe** | Framework-disposable data (cache, logs, crash reports, temp) — rebuilt automatically |
+| **likely-safe** | Chats/sessions for a resolved project whose **folder no longer exists on disk**, older than retention — history of deleted projects |
+| **review** | Old chats/sessions for a project that **still exists**, or old `(unknown-project)` data — a judgment call |
+| **keep** | Protected data, the shared `index/`, and anything newer than its retention period |
+
+The report is advisory. To act on a suggestion, run the printed `clean` command
+(drop `--dry-run` to actually delete); `clean` still enforces all retention and
+protection rules.
 
 ### `kiro-cleaner clean`
 

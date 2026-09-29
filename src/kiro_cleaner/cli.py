@@ -17,6 +17,15 @@ from kiro_cleaner.platform import kill_kiro_processes, resolve_platform
 from kiro_cleaner.project_view import ProjectView, build_project_view
 from kiro_cleaner.retention import filter_by_retention
 from kiro_cleaner.scanner import format_size, scan_storage
+from kiro_cleaner.suggest import (
+    TIER_KEEP,
+    TIER_LIKELY_SAFE,
+    TIER_ORDER,
+    TIER_REVIEW,
+    TIER_SAFE,
+    SuggestionReport,
+    build_suggestions,
+)
 
 VALID_CATEGORIES = ["logs", "cache", "chats", "sessions", "index", "temp", "history", "crash_reports"]
 
@@ -63,13 +72,67 @@ def _display_project_view(view: ProjectView) -> None:
     click.echo(f"{'Total':<40} {format_size(view.total_bytes):>10}")
 
 
+_TIER_HEADINGS = {
+    TIER_SAFE: "SAFE — framework-disposable (cache, logs, crash reports, temp)",
+    TIER_LIKELY_SAFE: "LIKELY SAFE — history of projects whose folder no longer exists",
+    TIER_REVIEW: "REVIEW — old history for existing or unattributed projects",
+    TIER_KEEP: "KEEP — recent, protected, or otherwise not suggested",
+}
+
+
+def _display_suggestions(report: SuggestionReport) -> None:
+    """Render the read-only safety-tiered deletion suggestions."""
+    click.echo("Deletion suggestions (read-only — nothing is deleted)\n")
+
+    reclaimable = (
+        report.tier_totals.get(TIER_SAFE, 0)
+        + report.tier_totals.get(TIER_LIKELY_SAFE, 0)
+        + report.tier_totals.get(TIER_REVIEW, 0)
+    )
+
+    for tier in TIER_ORDER:
+        tier_items = [it for it in report.items if it.tier == tier]
+        tier_total = report.tier_totals.get(tier, 0)
+        if not tier_items and tier_total == 0:
+            continue
+
+        click.echo(f"== {_TIER_HEADINGS[tier]} ==")
+        click.echo(f"   Total: {format_size(tier_total)}")
+        # Show contributing groups (skip keep detail to reduce noise).
+        if tier != TIER_KEEP:
+            for it in tier_items:
+                group = it.group
+                if len(group) > 46:
+                    group = "..." + group[-43:]
+                note = ""
+                if it.tier == TIER_LIKELY_SAFE:
+                    note = "  [folder missing]"
+                click.echo(f"     {group:<46} {format_size(it.reclaimable_bytes):>10}{note}")
+                if it.clean_hint:
+                    click.echo(f"       -> {it.clean_hint}")
+        click.echo()
+
+    click.echo(f"{'-' * 60}")
+    click.echo(f"Potentially reclaimable (safe + likely-safe + review): {format_size(reclaimable)}")
+    click.echo(f"Total scanned: {format_size(report.total_bytes)}")
+    click.echo(
+        "\nSuggestions are advisory. Run the printed `clean` command "
+        "(drop --dry-run to delete) to act on any of them."
+    )
+
+
 @main.command()
 @click.option(
     "--by-project",
     is_flag=True,
     help="Group storage usage by owning project folder (read-only report).",
 )
-def scan(by_project):
+@click.option(
+    "--suggest",
+    is_flag=True,
+    help="Suggest what is safe to delete, ranked by confidence (read-only).",
+)
+def scan(by_project, suggest):
     """Scan Kiro storage and display disk usage by category."""
     platform_info = resolve_platform()
     kiro_storage = platform_info.kiro_storage
@@ -83,6 +146,14 @@ def scan(by_project):
         sys.exit(1)
 
     result = scan_storage(kiro_storage)
+
+    if suggest:
+        view = build_project_view(kiro_storage, result)
+        report = build_suggestions(kiro_storage, view)
+        _display_suggestions(report)
+        for warning in result.warnings:
+            click.echo(f"[WARN] {warning}", err=True)
+        return
 
     if by_project:
         view = build_project_view(kiro_storage, result)
